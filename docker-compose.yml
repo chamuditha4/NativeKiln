@@ -1,0 +1,207 @@
+# =============================================================================
+# Native Kiln — control-plane Docker Compose project.
+#
+# Works with both `docker compose up -d` locally and a Coolify Docker Compose
+# resource. Rules honored (see CLAUDE.md):
+#   - No container_name (Coolify controls naming).
+#   - No bundled Traefik/Caddy/Nginx (Coolify supplies the external proxy).
+#   - Only browser-facing services (web, api) publish ports; postgres and redis
+#     are internal-only. Object storage is external (Cloudflare R2).
+#   - Only runner-manager may mount the Docker socket.
+#   - Secrets come from the environment (.env locally, Coolify secrets in prod).
+# =============================================================================
+
+x-node-service: &node-service
+  restart: unless-stopped
+  env_file:
+    - .env
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    # Internal only — never published publicly.
+    expose:
+      - '5432'
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes']
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    expose:
+      - '6379'
+
+  # Object storage is external (Cloudflare R2), configured via S3_* env vars.
+  # There is no local storage container.
+
+  # One-shot: applies migrations, then seeds the administrator. App services wait
+  # for this to complete successfully before starting.
+  migrate:
+    <<: *node-service
+    restart: 'no'
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: *node-service
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime-api
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://localhost:'+(process.env.API_PORT||4000)+'/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    # Browser-facing: exposed through Coolify's proxy in production.
+    ports:
+      - '${API_PORT:-4000}:4000'
+
+  web:
+    restart: unless-stopped
+    env_file:
+      - .env
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        API_BASE_URL: ${API_BASE_URL}
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://localhost:'+(process.env.WEB_PORT||3000)+'/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    # Browser-facing: exposed through Coolify's proxy in production.
+    ports:
+      - '${WEB_PORT:-3000}:3000'
+
+  worker:
+    <<: *node-service
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime-worker
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://localhost:4200/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  runner-manager:
+    <<: *node-service
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime-runner-manager
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+    depends_on:
+      redis:
+        condition: service_healthy
+    # SECURITY BOUNDARY: only the runner-manager may access the Docker socket.
+    # The public API must never mount it. Read-only mount limits the surface.
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - runner_cache:/runner-cache
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://localhost:'+(process.env.RUNNER_MANAGER_PORT||4100)+'/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  cleanup:
+    <<: *node-service
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime-cleanup
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://localhost:4300/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+volumes:
+  postgres_data:
+  redis_data:
+  runner_cache:

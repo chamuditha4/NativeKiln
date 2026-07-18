@@ -1,0 +1,39 @@
+{
+  "name": "native-kiln",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Private, self-hosted mobile build and submission platform.",
+  "license": "SEE LICENSE IN LICENSE",
+  "engines": {
+    "node": ">=22 <23",
+    "pnpm": ">=10"
+  },
+  "packageManager": "pnpm@10.16.1",
+  "scripts": {
+    "build": "pnpm -r build",
+    "lint": "pnpm -r --if-present lint",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test": "pnpm -r --if-present test",
+    "format": "prettier --write \"**/*.{ts,tsx,js,json,md,yml,yaml}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,json,md,yml,yaml}\"",
+    "db:generate": "pnpm --filter @native-kiln/database generate",
+    "db:migrate": "pnpm --filter @native-kiln/database migrate:deploy",
+    "db:seed": "pnpm --filter @native-kiln/database seed"
+  },
+  "devDependencies": {
+    "@types/node": "22.10.5",
+    "prettier": "3.4.2",
+    "typescript": "5.7.3",
+    "vitest": "2.1.8"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@nestjs/core",
+      "@prisma/client",
+      "@prisma/engines",
+      "argon2",
+      "esbuild",
+      "prisma"
+    ]
+  }
+}

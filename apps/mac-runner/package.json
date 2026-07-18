@@ -1,0 +1,22 @@
+{
+  "name": "@native-kiln/mac-runner",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "kiln-runner": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/cli.js",
+    "dev": "tsx src/cli.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@native-kiln/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "tsx": "4.19.2",
+    "typescript": "5.7.3"
+  }
+}

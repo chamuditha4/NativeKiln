@@ -1,0 +1,14 @@
+**/node_modules
+**/dist
+**/.next
+**/*.tsbuildinfo
+.git
+.gitignore
+# Never copy secrets into the build context.
+.env
+.env.*
+!.env.example
+coverage
+tmp-workspaces
+artifacts
+*.log
